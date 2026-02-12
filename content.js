@@ -1,6 +1,7 @@
 let isEnabled = true;
 let isUpdating = false;
 
+// Load toggle state
 chrome.storage.sync.get(["enabled"], (result) => {
   if (result.enabled !== undefined) {
     isEnabled = result.enabled;
@@ -13,30 +14,41 @@ chrome.storage.onChanged.addListener((changes) => {
   }
 });
 
+// Frequency-based segmentation
 function smartWordBreak(word) {
   word = word.toLowerCase();
 
-  // Rule 1: If whole word exists, do NOT split
-  if (WORD_DICTIONARY.has(word)) {
+  // Prefer full word immediately
+  if (WORD_DICTIONARY[word]) {
     return word;
   }
 
   const dp = new Array(word.length + 1).fill(null);
-  dp[0] = [];
+  dp[0] = { words: [], score: 0 };
 
   for (let i = 1; i <= word.length; i++) {
     for (let j = 0; j < i; j++) {
       if (dp[j] !== null) {
         const segment = word.substring(j, i);
-        if (WORD_DICTIONARY.has(segment)) {
-          const candidate = [...dp[j], segment];
 
-          // Prefer fewer splits
+        if (WORD_DICTIONARY[segment]) {
+
+          const baseScore = WORD_DICTIONARY[segment];
+
+          // Penalize small fragments
+          const penalty = segment.length < 3 ? 3000 : 0;
+
+          const totalScore =
+            dp[j].score + baseScore - penalty;
+
           if (
             dp[i] === null ||
-            candidate.length < dp[i].length
+            totalScore > dp[i].score
           ) {
-            dp[i] = candidate;
+            dp[i] = {
+              words: [...dp[j].words, segment],
+              score: totalScore
+            };
           }
         }
       }
@@ -45,12 +57,17 @@ function smartWordBreak(word) {
 
   if (!dp[word.length]) return null;
 
-  // Avoid extreme fragmentation
-  if (dp[word.length].length > 3) return null;
+  const result = dp[word.length];
 
-  return dp[word.length].join(" ");
+  // Reject weak splits
+  if (result.words.length <= 1) return result.words[0];
+
+  if (result.score < 4000) return null;
+
+  return result.words.join(" ");
 }
 
+// Handle contentEditable (ChatGPT, modern apps)
 function processContentEditable() {
   const active = document.activeElement;
   if (!active || !active.isContentEditable) return;
@@ -97,6 +114,7 @@ function processContentEditable() {
   isUpdating = false;
 }
 
+// Handle normal input/textarea
 function processInputElement(element) {
   const cursorPos = element.selectionStart;
   const text = element.value;
@@ -125,7 +143,8 @@ function processInputElement(element) {
   isUpdating = false;
 }
 
-document.addEventListener("keyup", (event) => {
+// Listen for typing
+document.addEventListener("keyup", () => {
   if (!isEnabled || isUpdating) return;
 
   const active = document.activeElement;

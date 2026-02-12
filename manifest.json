@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Smart Auto Space Keyboard",
-  "version": "2.0",
-  "description": "Intelligent word segmentation for continuous typing.",
+  "version": "3.0",
+  "description": "Frequency-based intelligent word segmentation for continuous typing.",
   "permissions": ["storage"],
   "host_permissions": ["<all_urls>"],
   "background": {
