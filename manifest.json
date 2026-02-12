@@ -1,34 +1,22 @@
 {
-    "manifest_version": 3,
-    "name": "Smart Auto Space Keyboard",
-    "version": "1.2",
-    "description": "Automatically inserts intelligent spaces between continuous words.",
-    "permissions": [
-        "storage",
-        "scripting"
-    ],
-    "host_permissions": [
-        "https://chat.openai.com/*",
-        "https://*.openai.com/*",
-        "<all_urls>"
-    ],
-    "background": {
-        "service_worker": "background.js"
-    },
-    "action": {
-        "default_popup": "popup.html"
-    },
-    "content_scripts": [
-        {
-            "matches": [
-                "<all_urls>"
-            ],
-            "js": [
-                "dictionary.js",
-                "content.js"
-            ],
-            "run_at": "document_end",
-            "all_frames": true
-        }
-    ]
+  "manifest_version": 3,
+  "name": "Smart Auto Space Keyboard",
+  "version": "2.0",
+  "description": "Intelligent word segmentation for continuous typing.",
+  "permissions": ["storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["dictionary.js", "content.js"],
+      "run_at": "document_end",
+      "all_frames": true
+    }
+  ]
 }

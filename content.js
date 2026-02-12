@@ -2,120 +2,141 @@ let isEnabled = true;
 let isUpdating = false;
 
 chrome.storage.sync.get(["enabled"], (result) => {
-    if (result.enabled !== undefined) {
-        isEnabled = result.enabled;
-    }
+  if (result.enabled !== undefined) {
+    isEnabled = result.enabled;
+  }
 });
 
 chrome.storage.onChanged.addListener((changes) => {
-    if (changes.enabled) {
-        isEnabled = changes.enabled.newValue;
-    }
+  if (changes.enabled) {
+    isEnabled = changes.enabled.newValue;
+  }
 });
 
-function wordBreak(word) {
-    word = word.toLowerCase();
-    const dp = new Array(word.length + 1).fill(null);
-    dp[0] = [];
+function smartWordBreak(word) {
+  word = word.toLowerCase();
 
-    for (let i = 1; i <= word.length; i++) {
-        for (let j = 0; j < i; j++) {
-            if (dp[j] !== null && WORD_DICTIONARY.has(word.substring(j, i))) {
-                dp[i] = [...dp[j], word.substring(j, i)];
-                break;
-            }
+  // Rule 1: If whole word exists, do NOT split
+  if (WORD_DICTIONARY.has(word)) {
+    return word;
+  }
+
+  const dp = new Array(word.length + 1).fill(null);
+  dp[0] = [];
+
+  for (let i = 1; i <= word.length; i++) {
+    for (let j = 0; j < i; j++) {
+      if (dp[j] !== null) {
+        const segment = word.substring(j, i);
+        if (WORD_DICTIONARY.has(segment)) {
+          const candidate = [...dp[j], segment];
+
+          // Prefer fewer splits
+          if (
+            dp[i] === null ||
+            candidate.length < dp[i].length
+          ) {
+            dp[i] = candidate;
+          }
         }
+      }
     }
+  }
 
-    return dp[word.length] ? dp[word.length].join(" ") : null;
+  if (!dp[word.length]) return null;
+
+  // Avoid extreme fragmentation
+  if (dp[word.length].length > 3) return null;
+
+  return dp[word.length].join(" ");
+}
+
+function processContentEditable() {
+  const active = document.activeElement;
+  if (!active || !active.isContentEditable) return;
+
+  const selection = window.getSelection();
+  if (!selection.rangeCount) return;
+
+  const range = selection.getRangeAt(0);
+  const node = range.startContainer;
+
+  if (!node || node.nodeType !== Node.TEXT_NODE) return;
+
+  const text = node.textContent;
+  const cursorPos = range.startOffset;
+
+  const beforeCursor = text.slice(0, cursorPos);
+  const match = beforeCursor.match(/([a-zA-Z]+)$/);
+  if (!match) return;
+
+  const lastWord = match[0];
+  if (lastWord.length < 4) return;
+
+  const segmented = smartWordBreak(lastWord);
+  if (!segmented || segmented === lastWord) return;
+
+  const start = cursorPos - lastWord.length;
+  const newText =
+    text.slice(0, start) +
+    segmented +
+    text.slice(cursorPos);
+
+  isUpdating = true;
+
+  node.textContent = newText;
+
+  const newCursor = start + segmented.length;
+  const newRange = document.createRange();
+  newRange.setStart(node, newCursor);
+  newRange.collapse(true);
+
+  selection.removeAllRanges();
+  selection.addRange(newRange);
+
+  isUpdating = false;
 }
 
 function processInputElement(element) {
-    if (!element.value) return;
+  const cursorPos = element.selectionStart;
+  const text = element.value;
 
-    const cursorPos = element.selectionStart;
-    const text = element.value;
+  const beforeCursor = text.slice(0, cursorPos);
+  const match = beforeCursor.match(/([a-zA-Z]+)$/);
+  if (!match) return;
 
-    const beforeCursor = text.slice(0, cursorPos);
-    const match = beforeCursor.match(/([a-zA-Z]+)$/);
-    if (!match) return;
+  const lastWord = match[0];
+  if (lastWord.length < 4) return;
 
-    const lastWord = match[0];
-    if (lastWord.length < 4) return;
+  const segmented = smartWordBreak(lastWord);
+  if (!segmented || segmented === lastWord) return;
 
-    const segmented = wordBreak(lastWord);
-    if (!segmented || segmented === lastWord) return;
+  const start = cursorPos - lastWord.length;
+  const newText =
+    text.slice(0, start) +
+    segmented +
+    text.slice(cursorPos);
 
-    const start = cursorPos - lastWord.length;
-    const newText =
-        text.slice(0, start) +
-        segmented +
-        text.slice(cursorPos);
+  const newCursor = start + segmented.length;
 
-    const newCursorPos = start + segmented.length;
-
-    isUpdating = true;
-    element.value = newText;
-    element.setSelectionRange(newCursorPos, newCursorPos);
-    isUpdating = false;
+  isUpdating = true;
+  element.value = newText;
+  element.setSelectionRange(newCursor, newCursor);
+  isUpdating = false;
 }
 
-function processContentEditable(element) {
-    const selection = window.getSelection();
-    if (!selection.rangeCount) return;
+document.addEventListener("keyup", (event) => {
+  if (!isEnabled || isUpdating) return;
 
-    const range = selection.getRangeAt(0);
-    const textNode = range.startContainer;
+  const active = document.activeElement;
 
-    if (!textNode || textNode.nodeType !== 3) return;
-
-    const text = textNode.textContent;
-    const cursorPos = range.startOffset;
-
-    const beforeCursor = text.slice(0, cursorPos);
-    const match = beforeCursor.match(/([a-zA-Z]+)$/);
-    if (!match) return;
-
-    const lastWord = match[0];
-    if (lastWord.length < 4) return;
-
-    const segmented = wordBreak(lastWord);
-    if (!segmented || segmented === lastWord) return;
-
-    const start = cursorPos - lastWord.length;
-    const newText =
-        text.slice(0, start) +
-        segmented +
-        text.slice(cursorPos);
-
-    isUpdating = true;
-
-    textNode.textContent = newText;
-
-    const newCursorPos = start + segmented.length;
-    const newRange = document.createRange();
-    newRange.setStart(textNode, newCursorPos);
-    newRange.collapse(true);
-
-    selection.removeAllRanges();
-    selection.addRange(newRange);
-
-    isUpdating = false;
-}
-
-document.addEventListener("input", (event) => {
-    if (!isEnabled || isUpdating) return;
-
-    const element = event.target;
-
-    if (
-        element.tagName === "INPUT" &&
-        element.type !== "password"
-    ) {
-        processInputElement(element);
-    } else if (element.tagName === "TEXTAREA") {
-        processInputElement(element);
-    } else if (element.isContentEditable) {
-        processContentEditable(element);
-    }
+  if (active && active.isContentEditable) {
+    processContentEditable();
+  } else if (
+    active &&
+    (active.tagName === "INPUT" || active.tagName === "TEXTAREA") &&
+    active.type !== "password"
+  ) {
+    processInputElement(active);
+  }
 });
