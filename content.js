@@ -1,7 +1,8 @@
 let isEnabled = true;
 let isUpdating = false;
 
-// Load toggle state
+const segmentationCache = {};
+
 chrome.storage.sync.get(["enabled"], (result) => {
   if (result.enabled !== undefined) {
     isEnabled = result.enabled;
@@ -14,12 +15,15 @@ chrome.storage.onChanged.addListener((changes) => {
   }
 });
 
-// Frequency-based segmentation
 function smartWordBreak(word) {
   word = word.toLowerCase();
 
-  // Prefer full word immediately
+  if (segmentationCache[word]) {
+    return segmentationCache[word];
+  }
+
   if (WORD_DICTIONARY[word]) {
+    segmentationCache[word] = word;
     return word;
   }
 
@@ -32,11 +36,9 @@ function smartWordBreak(word) {
         const segment = word.substring(j, i);
 
         if (WORD_DICTIONARY[segment]) {
-
           const baseScore = WORD_DICTIONARY[segment];
 
-          // Penalize small fragments
-          const penalty = segment.length < 3 ? 3000 : 0;
+          const penalty = segment.length < 3 ? 5000 : 0;
 
           const totalScore =
             dp[j].score + baseScore - penalty;
@@ -59,93 +61,63 @@ function smartWordBreak(word) {
 
   const result = dp[word.length];
 
-  // Reject weak splits
-  if (result.words.length <= 1) return result.words[0];
+  if (result.score < 6000) return null;
 
-  if (result.score < 4000) return null;
+  const finalResult =
+    result.words.length > 1
+      ? result.words.join(" ")
+      : result.words[0];
 
-  return result.words.join(" ");
+  segmentationCache[word] = finalResult;
+
+  return finalResult;
 }
 
-// Handle contentEditable (ChatGPT, modern apps)
-function processContentEditable() {
-  const active = document.activeElement;
-  if (!active || !active.isContentEditable) return;
-
-  const selection = window.getSelection();
-  if (!selection.rangeCount) return;
-
-  const range = selection.getRangeAt(0);
-  const node = range.startContainer;
-
-  if (!node || node.nodeType !== Node.TEXT_NODE) return;
-
-  const text = node.textContent;
-  const cursorPos = range.startOffset;
-
-  const beforeCursor = text.slice(0, cursorPos);
-  const match = beforeCursor.match(/([a-zA-Z]+)$/);
-  if (!match) return;
-
-  const lastWord = match[0];
-  if (lastWord.length < 4) return;
-
-  const segmented = smartWordBreak(lastWord);
-  if (!segmented || segmented === lastWord) return;
-
-  const start = cursorPos - lastWord.length;
-  const newText =
-    text.slice(0, start) +
-    segmented +
-    text.slice(cursorPos);
-
-  isUpdating = true;
-
-  node.textContent = newText;
-
-  const newCursor = start + segmented.length;
-  const newRange = document.createRange();
-  newRange.setStart(node, newCursor);
-  newRange.collapse(true);
-
-  selection.removeAllRanges();
-  selection.addRange(newRange);
-
-  isUpdating = false;
-}
-
-// Handle normal input/textarea
 function processInputElement(element) {
   const cursorPos = element.selectionStart;
   const text = element.value;
 
-  const beforeCursor = text.slice(0, cursorPos);
-  const match = beforeCursor.match(/([a-zA-Z]+)$/);
-  if (!match) return;
+  const words = text.trim().split(/\s+/);
+  const lastWord = words[words.length - 1];
 
-  const lastWord = match[0];
-  if (lastWord.length < 4) return;
+  if (!lastWord || lastWord.length < 6) return;
 
   const segmented = smartWordBreak(lastWord);
   if (!segmented || segmented === lastWord) return;
 
-  const start = cursorPos - lastWord.length;
+  const start = text.lastIndexOf(lastWord);
   const newText =
     text.slice(0, start) +
     segmented +
-    text.slice(cursorPos);
+    text.slice(start + lastWord.length);
 
-  const newCursor = start + segmented.length;
-
-  isUpdating = true;
   element.value = newText;
-  element.setSelectionRange(newCursor, newCursor);
-  isUpdating = false;
 }
 
-// Listen for typing
-document.addEventListener("keyup", () => {
+function processContentEditable() {
+  const active = document.activeElement;
+  if (!active || !active.isContentEditable) return;
+
+  const text = active.innerText.trim();
+  const words = text.split(/\s+/);
+  const lastWord = words[words.length - 1];
+
+  if (!lastWord || lastWord.length < 6) return;
+
+  const segmented = smartWordBreak(lastWord);
+  if (!segmented || segmented === lastWord) return;
+
+  const newText =
+    text.slice(0, text.lastIndexOf(lastWord)) +
+    segmented;
+
+  active.innerText = newText;
+}
+
+document.addEventListener("keydown", (event) => {
   if (!isEnabled || isUpdating) return;
+
+  if (event.key !== " " && event.key !== "Enter") return;
 
   const active = document.activeElement;
 
