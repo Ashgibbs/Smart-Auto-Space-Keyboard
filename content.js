@@ -2,6 +2,7 @@ let isEnabled = true;
 let isUpdating = false;
 
 const segmentationCache = {};
+let debounceTimer = null;
 
 chrome.storage.sync.get(["enabled"], (result) => {
   if (result.enabled !== undefined) {
@@ -15,119 +16,150 @@ chrome.storage.onChanged.addListener((changes) => {
   }
 });
 
+// ===============================
+// SMART WORD BREAK (STRICT)
+// ===============================
 function smartWordBreak(word) {
   word = word.toLowerCase();
 
-  if (segmentationCache[word]) {
-    return segmentationCache[word];
-  }
+  if (segmentationCache[word]) return segmentationCache[word];
 
+  // STRICT RULE: Never split if full word exists
   if (WORD_DICTIONARY[word]) {
     segmentationCache[word] = word;
     return word;
   }
 
+  // Only attempt segmentation for long words
+  if (word.length < 8) return null;
+
   const dp = new Array(word.length + 1).fill(null);
-  dp[0] = { words: [], score: 0 };
+  dp[0] = [];
 
   for (let i = 1; i <= word.length; i++) {
     for (let j = 0; j < i; j++) {
-      if (dp[j] !== null) {
-        const segment = word.substring(j, i);
+      if (!dp[j]) continue;
 
-        if (WORD_DICTIONARY[segment]) {
-          const baseScore = WORD_DICTIONARY[segment];
+      const segment = word.slice(j, i);
+      if (!WORD_DICTIONARY[segment]) continue;
 
-          const penalty = segment.length < 3 ? 5000 : 0;
+      const candidate = [...dp[j], segment];
 
-          const totalScore =
-            dp[j].score + baseScore - penalty;
-
-          if (
-            dp[i] === null ||
-            totalScore > dp[i].score
-          ) {
-            dp[i] = {
-              words: [...dp[j].words, segment],
-              score: totalScore
-            };
-          }
-        }
+      if (!dp[i] || candidate.length < dp[i].length) {
+        dp[i] = candidate;
       }
     }
   }
 
   if (!dp[word.length]) return null;
 
-  const result = dp[word.length];
+  const result = dp[word.length].join(" ");
+  segmentationCache[word] = result;
 
-  if (result.score < 6000) return null;
-
-  const finalResult =
-    result.words.length > 1
-      ? result.words.join(" ")
-      : result.words[0];
-
-  segmentationCache[word] = finalResult;
-
-  return finalResult;
+  return result;
 }
 
-function processInputElement(element) {
-  const cursorPos = element.selectionStart;
+// ===============================
+// PROCESS INPUT ELEMENT
+// ===============================
+function processInput(element) {
+  const cursor = element.selectionStart;
   const text = element.value;
 
-  const words = text.trim().split(/\s+/);
-  const lastWord = words[words.length - 1];
+  const beforeCursor = text.slice(0, cursor);
+  const match = beforeCursor.match(/([a-zA-Z]{6,})$/);
 
-  if (!lastWord || lastWord.length < 6) return;
+  if (!match) return;
 
-  const segmented = smartWordBreak(lastWord);
-  if (!segmented || segmented === lastWord) return;
+  const word = match[1];
 
-  const start = text.lastIndexOf(lastWord);
-  const newText =
+  // STRICT FULL WORD CHECK AGAIN
+  if (WORD_DICTIONARY[word]) return;
+
+  const segmented = smartWordBreak(word);
+  if (!segmented || segmented === word) return;
+
+  const start = cursor - word.length;
+
+  isUpdating = true;
+
+  element.value =
     text.slice(0, start) +
     segmented +
-    text.slice(start + lastWord.length);
+    text.slice(cursor);
 
-  element.value = newText;
+  const newCursor = start + segmented.length;
+  element.setSelectionRange(newCursor, newCursor);
+
+  isUpdating = false;
 }
 
+// ===============================
+// PROCESS CONTENTEDITABLE
+// ===============================
 function processContentEditable() {
-  const active = document.activeElement;
-  if (!active || !active.isContentEditable) return;
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
 
-  const text = active.innerText.trim();
-  const words = text.split(/\s+/);
-  const lastWord = words[words.length - 1];
+  const range = sel.getRangeAt(0);
+  const node = range.startContainer;
 
-  if (!lastWord || lastWord.length < 6) return;
+  if (!node || node.nodeType !== Node.TEXT_NODE) return;
 
-  const segmented = smartWordBreak(lastWord);
-  if (!segmented || segmented === lastWord) return;
+  const text = node.textContent;
+  const cursor = range.startOffset;
 
-  const newText =
-    text.slice(0, text.lastIndexOf(lastWord)) +
-    segmented;
+  const beforeCursor = text.slice(0, cursor);
+  const match = beforeCursor.match(/([a-zA-Z]{6,})$/);
 
-  active.innerText = newText;
+  if (!match) return;
+
+  const word = match[1];
+
+  // STRICT FULL WORD CHECK
+  if (WORD_DICTIONARY[word]) return;
+
+  const segmented = smartWordBreak(word);
+  if (!segmented || segmented === word) return;
+
+  const start = cursor - word.length;
+
+  isUpdating = true;
+
+  node.textContent =
+    text.slice(0, start) +
+    segmented +
+    text.slice(cursor);
+
+  const newRange = document.createRange();
+  newRange.setStart(node, start + segmented.length);
+  newRange.collapse(true);
+
+  sel.removeAllRanges();
+  sel.addRange(newRange);
+
+  isUpdating = false;
 }
 
-document.addEventListener("keydown", (event) => {
+// ===============================
+// REAL-TIME LISTENER WITH DEBOUNCE
+// ===============================
+document.addEventListener("input", () => {
   if (!isEnabled || isUpdating) return;
 
-  if (event.key !== " " && event.key !== "Enter") return;
+  clearTimeout(debounceTimer);
 
-  const active = document.activeElement;
+  debounceTimer = setTimeout(() => {
+    const active = document.activeElement;
 
-  if (active && active.isContentEditable) {
-    processContentEditable();
-  } else if (
-    active &&
-    (active.tagName === "INPUT" || active.tagName === "TEXTAREA") &&
-    active.type !== "password"
-  ) {
-    processInputElement(active);
-  }
+    if (active?.isContentEditable) {
+      processContentEditable();
+    } else if (
+      active &&
+      (active.tagName === "INPUT" || active.tagName === "TEXTAREA") &&
+      active.type !== "password"
+    ) {
+      processInput(active);
+    }
+  }, 80); // slight delay stabilizes Chrome + Edge
 });
