@@ -1,0 +1,10 @@
+{
+  "name": "smart-auto-space-keyboard",
+  "version": "3.0.0",
+  "description": "Frequency-based intelligent word segmentation for continuous typing.",
+  "private": true,
+  "scripts": {
+    "test": "node run.js",
+    "start": "node run.js"
+  }
+}
